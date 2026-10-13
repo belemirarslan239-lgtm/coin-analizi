@@ -58,7 +58,7 @@ input{min-height:38px;max-width:100%}.sep{display:none}h1{font-size:19px}
 <div class="vbar"><span class="lbl">Piyasanın içi:</span><button class="tf" id="tOI">Open Interest</button><button class="tf" id="tLiq">Likidasyonlar</button><button class="tf" id="tBook">Emir defteri duvarları</button></div>
 <div id="legend">Yükleniyor…</div><div id="indInfo"></div><div id="mktInfo"></div>
 <div id="mainBox"><div class="ch"></div><div class="sub"></div><div class="oi"></div></div><div id="multi"></div>
-<div class="key" id="vbKey" style="display:none;margin-bottom:6px"><b>Hacim yoğunluğu:</b> mum koyuluğu göreli hacimle (son 20 mum ortalamasına göre) orantılı. <b>Koyu mum = hacimli, gerçek hareket</b> (ortalamanın 2 katı ve üstü tam renk); <b>soluk mum = hacimsiz hareket</b> (ortalamanın yarısı ve altı). <b>Siyah/beyaz çerçeve</b> = ortalamanın 3 katı üstü anormal hacim. <span style="color:#d4a017;font-weight:600">Altın çerçeve</span> = büyük gövde (≥0,8 ATR) ama hacim ortalamanın %70’inin altında → sahte hareket adayı. Açık mumun hacmi geçen süreye göre oranlanır.</div>
+<div class="key" id="vbKey" style="display:none;margin-bottom:6px"><b>Hacim yoğunluğu:</b> mum koyuluğu göreli hacimle (son 20 mum ortalamasına göre) orantılı. <b>Koyu mum = hacimli, gerçek hareket</b> (ortalamanın 2 katı ve üstü tam renk); <b>soluk mum = hacimsiz hareket</b> (ortalamanın yarısı ve altı). <b>Siyah/beyaz çerçeve</b> = ortalamanın 3 katı üstü anormal hacim. <span style="color:#f5b800;font-weight:700;text-shadow:0 0 6px rgba(255,200,0,.8)">Altın parıltılı çerçeve</span> = büyük gövde (≥0,8 ATR) ama hacim ortalamanın %70’inin altında → sahte hareket adayı. <b>Ne kadar parlaksa o kadar güçlü sahte hareket sinyali:</b> gövde ATR’ye göre ne kadar büyük ve hacim ne kadar düşükse çerçeve o kadar kalın, parlak ve ışıltılı; soluk ince altın = zayıf aday. Açık mumun hacmi geçen süreye göre oranlanır.</div>
 <div class="key" id="srKey" style="display:none;margin-bottom:6px"><b>Destek (S) / Direnç (R):</b> her zaman diliminin kendi mumlarından canlı hesaplanır — son 600 mumdaki swing tepe/dipler ATR mesafesinde kümelenir, hacim ve yakınlıkla ağırlıklandırılır; fiyatın üstündeki ve altındaki en yakın 2 güçlü küme gösterilir. “×3” = seviyeye 3 kez dokunulmuş. Düz = en az 2 temas, kalın = 3+, kesikli = tek temas. Her yeni mumda yeniden hesaplanır.</div>
 <div class="key"><b>Piyasanın içi:</b> <b>OI paneli</b> — sarı çizgi açık pozisyon büyüklüğü ($), çubuklar her mumdaki OI değişimi: koyu yeşil = fiyat↑ OI↑ (yeni long), koyu kırmızı = fiyat↓ OI↑ (yeni short), soluk yeşil = fiyat↑ OI↓ (short kapanışı), soluk kırmızı = fiyat↓ OI↓ (long kapanışı). Binance yalnızca son 30 günün OI geçmişini verir. <b>Likidasyonlar</b> — L = long tasfiyesi (mumun altında), S = short tasfiyesi (üstünde), daire boyu tutarla büyür; sayfa açıkken toplanır ve tarayıcıda saklanır (Binance saniyede en fazla 1 likidasyon yayınlar, küçükler eksik kalabilir). <b>Emir defteri</b> — sağ kenarda fiyat basamaklarına göre bekleyen limit emirler (yeşil alış, kırmızı satış), parlak olanlar duvar (medyanın 3 katı+), yanında tutar ve ne kadar süredir durduğu; 4 sn’de bir yenilenir.</div>
 <div class="key"><b>⏱ Sayaç:</b> fiyat ekseninde son fiyatın yanında, açık mumun kapanmasına kalan süre. · Saatler TSİ · Veri: Binance USDT-M canlı. Kartlardaki analizler 12.10.2026 08:40 sabit.</div>
@@ -753,10 +753,26 @@ const TFSEC={'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,
 function rgba(hex,a){hex=hex.replace('#','');if(hex.length===3)hex=hex.split('').map(c=>c+c).join('');const n=parseInt(hex,16);return`rgba(${n>>16&255},${n>>8&255},${n&255},${a.toFixed(3)})`}
 function relVol(v,i){const d=v.d,st=Math.max(0,i-20);if(i-st<5)return 1;let s=0;for(let j=st;j<i;j++)s+=d[j].value;const avg=s/(i-st);let val=d[i].value;
   if(i===d.length-1){const el=(Date.now()/1000+OFF-d[i].time)/TFSEC[v.tf];if(el>0&&el<1)val=val/Math.max(.05,el)}return avg?val/avg:1}
-function styleBar(v,i,atr){const x=v.d[i],up=x.close>=x.open,base=up?v.upC:v.dnC;if(!cur.vb)return{...x,color:base,wickColor:base,borderColor:base};
+function fakeStr(x,atr,rv){if(!atr)return 0;const b=Math.abs(x.close-x.open)/atr;if(b<.8||rv>=.7)return 0;
+  const sz=Math.min(1,(b-.8)/1.2),lv=Math.min(1,(.7-rv)/.5);return Math.min(1,.15+.85*Math.sqrt(sz*.5+lv*.5))}
+function goldC(s){const a=.45+.55*s,g=Math.round(150+65*s),b=Math.round(20*(1-s));return`rgba(${Math.round(200+55*s)},${g},${b},${a.toFixed(2)})`}
+function styleBar(v,i,atr){const x=v.d[i],up=x.close>=x.open,base=up?v.upC:v.dnC;if(v.gold)v.gold.m.delete(x.time);if(!cur.vb)return{...x,color:base,wickColor:base,borderColor:base};
   const rv=relVol(v,i),a=Math.max(.25,Math.min(1,.25+(Math.log2(Math.max(rv,.01))+1)/2*.75));
-  const fake=atr&&Math.abs(x.close-x.open)>=.8*atr&&rv<.7,huge=rv>=3;
-  return{...x,color:rgba(base,a),wickColor:rgba(base,Math.max(.35,a)),borderColor:fake?'#d4a017':huge?css('--tx'):rgba(base,a)}}
+  const fs=fakeStr(x,atr,rv),huge=rv>=3;if(fs&&v.gold)v.gold.m.set(x.time,fs);
+  return{...x,color:rgba(base,a),wickColor:rgba(base,Math.max(.35,a)),borderColor:fs?goldC(fs):huge?css('--tx'):rgba(base,a)}}
+/* altın parıltı: sahte hareket gücüne göre kalınlık + glow (series primitive) */
+function goldInit(v){const G={m:new Map(),req:null};v.gold=G;
+  const R={draw(t){if(!cur.vb||!G.m.size)return;const ts=v.ch.timeScale(),bs=ts.options().barSpacing||6;
+    t.useBitmapCoordinateSpace(({context:c,horizontalPixelRatio:hr,verticalPixelRatio:vr})=>{c.save();
+      for(const[time,s]of G.m){const x=ts.timeToCoordinate(time);if(x==null)continue;const k=v.d.find(q=>q.time===time);if(!k)continue;
+        const y1=v.cs.priceToCoordinate(Math.max(k.open,k.close)),y2=v.cs.priceToCoordinate(Math.min(k.open,k.close));if(y1==null||y2==null)continue;
+        const w=Math.max(3,bs*.8)+2+4*s,pad=2+3*s;
+        c.shadowColor=`rgba(255,200,0,${(.35+.65*s).toFixed(2)})`;c.shadowBlur=(3+18*s)*hr;c.strokeStyle=goldC(s);c.lineWidth=(1+3*s)*hr;
+        c.strokeRect((x-w/2)*hr,(y1-pad)*vr,w*hr,(y2-y1+2*pad)*vr);
+        if(s>.6){c.shadowBlur=(8+20*s)*hr;c.strokeRect((x-w/2)*hr,(y1-pad)*vr,w*hr,(y2-y1+2*pad)*vr)}}
+      c.restore()})}};
+  const pv={renderer:()=>R,zOrder:()=>'top'};
+  v.cs.attachPrimitive({paneViews:()=>[pv],attached(p){G.req=p.requestUpdate},updateAllViews(){}})}
 function paintAll(v){const a=atrA(v.d,14);v.cs.setData(v.d.map((x,i)=>styleBar(v,i,a[i])))}
 function paintLast(v){const i=v.d.length-1,a=atrA(v.d.slice(-60),14);v.cs.update(styleBar(v,i,a[a.length-1]))}
 
@@ -945,7 +961,7 @@ function make(box,d,c,tf,legend){
   const vs=ch.addHistogramSeries({priceScaleId:'v',priceFormat:{type:'volume'},lastValueVisible:false,priceLineVisible:false});
   ch.priceScale('v').applyOptions({scaleMargins:{top:.85,bottom:0}});vs.setData(d.map(x=>({time:x.time,value:x.value,color:(x.close>=x.open?up:dn)+'55'})));
   ch.timeScale().setVisibleLogicalRange({from:Math.max(0,d.length-(legend?250:140)),to:d.length+4});
-  const v={ch,cs,vs,d,el,subEl,oiEl,oiCh:null,mk:{smc:[],liq:[]},lock:false,sub:null,legend,c,tf,upC:up,dnC:dn,hover:null,sr:[],own:[],ii:{},ind:'none',info:''};views[tf]=v;paintAll(v);
+  const v={gold:null,ch,cs,vs,d,el,subEl,oiEl,oiCh:null,mk:{smc:[],liq:[]},lock:false,sub:null,legend,c,tf,upC:up,dnC:dn,hover:null,sr:[],own:[],ii:{},ind:'none',info:''};views[tf]=v;goldInit(v);paintAll(v);
   computeSR(v);tickCountdown();ch.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(v.lock||!r)return;v.lock=true;[v.sub,v.oiCh].forEach(c=>c&&c.timeScale().setVisibleLogicalRange(r));v.lock=false});
   if(legend)ch.subscribeCrosshairMove(e=>{v.hover=e.time?v.d.find(x=>x.time===e.time):null;showLegend(v)});
   xhInit(v);
