@@ -850,12 +850,70 @@ const IND={
    let last=null;const r=d.map(x=>{const b=bm.get(x.time);if(b)last=b;return last?x.close/last:null});const f=r.find(x=>x!=null);if(!f)return 'BTC verisi alınamadı.';const R=r.map(x=>x==null?null:100*x/f),M=emaA(R.map(x=>x??100),21);
    const g=css('--up'),rd=css('--dn');v.ii.l.setData(T(d,R,(x,i)=>({color:x>=M[i]?g:rd})));v.ii.m.setData(T(d,M.map((x,i)=>R[i]==null?null:x)));const n=R.length-1,ch=(R[n]/R[Math.max(0,n-20)]-1)*100;
    return `Son 20 mumda BTC’ye göre <b>${ch>=0?'+':''}${ch.toFixed(2)}%</b> → ${R[n]>=M[n]?(ch>0?'<b>BTC’den güçlü</b>':'ortalamanın üstünde ama yavaşlıyor'):(ch<0?'<b>BTC’den zayıf</b>':'ortalamanın altında ama toparlanıyor')}`}},
+ grs:{name:'Gerçek Rotasyon Skoru (GRS)',pane:true,desc:'Yükselişin gerçek para girişiyle mi (rotasyon) yoksa kaldıraç/ince hacimle mi (şişirme) geldiğini 0–100 arası tek skorda toplar. Bileşenler: BTC’ye göre güç (%30, coin/BTC oranının EMA20’ye konumu ve eğimi), hacim gerçekliği (%25, büyük gövdeli düşük hacimli yükselişler puanı düşürür, yüksek hacimli küçük düşüşler [birikim] artırır), spot vs kaldıraç (%25, fiyat ↑ iken OI hızla artıyor ve funding pozitifse düşer; OI yatay/düşüyorsa yükselir) ve piyasa genişliği (%20, listedeki coinlerin EMA50 üstündeki payı). 70 üstü (yeşil) = gerçek rotasyon, 40–70 (gri) = belirsiz, 40 altı (kırmızı) = şişirme/zayıf. Turuncu ⚠ = fiyat 20 mumluk zirveye yakınken GRS düşüyor (uyumsuzluk). Eksik veri olan bileşenin ağırlığı diğerlerine dağıtılır.',
+  setup(v){const o={priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:true,priceFormat:{type:'price',precision:0,minMove:1},autoscaleInfoProvider:()=>({priceRange:{minValue:0,maxValue:100}})};
+   v.ii.l=v.sub.addLineSeries({...o,lineWidth:2,title:'GRS'});
+   v.ii.l.createPriceLine({price:70,color:css('--up'),lineWidth:1,lineStyle:2,title:'70'});v.ii.l.createPriceLine({price:40,color:css('--dn'),lineWidth:1,lineStyle:2,title:'40'});
+   v.sub.priceScale('right').applyOptions({scaleMargins:{top:.14,bottom:.04}});grsZones(v);v.ii.gen=(v.ii.gen||0)+1},
+  teardown(v){v.ii.dead=true},
+  async update(v){return grsUpdate(v)}},
 };
 function drawVP(v){const vp=v.ii&&v.ii.vp,cv=v.ii&&v.ii.cv;if(!vp||!cv)return;const W=v.el.clientWidth,H=v.el.clientHeight,dpr=devicePixelRatio||1;
   if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px'}
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);const pw=v.ch.timeScale().width(),mx=Math.max(...vp.bins),maxW=pw*.22,off=cur.book?pw*.15+6:0;
   vp.bins.forEach((b,i)=>{const y1=v.cs.priceToCoordinate(vp.mn+(i+1)*vp.step),y2=v.cs.priceToCoordinate(vp.mn+i*vp.step);if(y1==null||y2==null)return;const w=b/mx*maxW;
     g.fillStyle=i===vp.poc?'rgba(212,160,23,.75)':(i>=vp.lo&&i<=vp.hi)?'rgba(212,160,23,.32)':'rgba(140,140,135,.22)';g.fillRect(pw-off-w,Math.min(y1,y2)+.5,w,Math.max(1,Math.abs(y2-y1)-1))})}
+
+/* ---------- Gerçek Rotasyon Skoru (GRS) ---------- */
+const GRSW={rs:.30,vol:.25,lev:.25,br:.20},GRS_TTL=5*60000,clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+let BREADTH={};/* tf -> {at,map:Map(time->{a,n}),busy,err,p} */
+function grsZones(v){const s=v.ii.l;const R={draw(t){t.useBitmapCoordinateSpace(({context:c,bitmapSize:bs,verticalPixelRatio:vr})=>{
+  const y=p=>{const q=s.priceToCoordinate(p);return q==null?null:q*vr},y100=y(100),y70=y(70),y40=y(40),y0=y(0);if([y100,y70,y40,y0].some(q=>q==null))return;
+  c.save();c.fillStyle=rgba(css('--up'),.10);c.fillRect(0,y100,bs.width,y70-y100);c.fillStyle=rgba('#9a9993',.08);c.fillRect(0,y70,bs.width,y40-y70);
+  c.fillStyle=rgba(css('--dn'),.10);c.fillRect(0,y40,bs.width,y0-y40);c.restore()})}};
+  const pv={renderer:()=>R,zOrder:()=>'bottom'};s.attachPrimitive({paneViews:()=>[pv],updateAllViews(){}})}
+async function grsPool(items,n,fn){let i=0;await Promise.all(Array.from({length:n},async()=>{while(i<items.length){const j=i++;try{await fn(items[j])}catch(e){}}}))}
+function breadthGet(tf,onDone){let B=BREADTH[tf];if(B&&(B.busy||Date.now()-B.at<GRS_TTL))return B;
+  B=BREADTH[tf]=Object.assign(B||{map:null},{busy:true});const acc=new Map();let ok=0;
+  grsPool(ORDER,4,async c=>{const d=await fetchK(c+'USDT',tf,300);if(d.length<60)return;const e=emaA(d.map(x=>x.close),50);ok++;
+    for(let i=50;i<d.length;i++){const q=acc.get(d[i].time)||{a:0,n:0};q.n++;if(d[i].close>e[i])q.a++;acc.set(d[i].time,q)}})
+   .then(()=>{B.busy=false;B.at=Date.now();if(ok>=Math.min(10,ORDER.length/3)){B.map=acc;B.ok=ok;B.err=null}else B.err=B.map?null:'genişlik verisi alınamadı';onDone&&onDone()});return B}
+async function fetchFunding(sym,startMs){const key='F'+sym,c=oiCache[key];if(c&&Date.now()-c.at<GRS_TTL)return c.d;
+  let out=[],st=startMs;for(let k=0;k<4;k++){const r=await fetch(`${FAPI}/fundingRate?symbol=${sym}&startTime=${st}&limit=1000`);if(!r.ok)break;const a=await r.json();if(!Array.isArray(a)||!a.length)break;out=out.concat(a);if(a.length<1000)break;st=a[a.length-1].fundingTime+1}
+  const d=out.map(x=>({t:+x.fundingTime,r:+x.fundingRate})).filter(x=>isFinite(x.r));oiCache[key]={d,at:Date.now()};return d}
+async function grsLoad(v){const I=v.ii,sym=v.c+'USDT',st=(v.d[0].time-OFF)*1000;
+  if(!I.lev||Date.now()-I.lev.at>GRS_TTL){const [oi,fu]=await Promise.all([fetchOIHist(sym,OIMAP[v.tf],st).catch(()=>[]),fetchFunding(sym,st).catch(()=>[])]);I.lev={oi,fu,at:Date.now()}}}
+function rollStd(a,n){return a.map((x,i)=>{if(x==null)return null;let s=0,s2=0,k=0;for(let j=Math.max(0,i-n+1);j<=i;j++)if(a[j]!=null){s+=a[j];s2+=a[j]*a[j];k++}return k<10?null:Math.sqrt(Math.max(1e-12,s2/k-(s/k)**2))})}
+async function grsUpdate(v){const d=v.d,n=d.length,I=v.ii,g0=I.gen;if(n<40)return 'Yetersiz mum.';await grsLoad(v);if(I.dead||I.gen!==g0)return;
+  /* 1) BTC'ye göre güç */
+  let RS=new Array(n).fill(null);if(v.c!=='BTC'){try{const B=await btcFor(v.tf,d[n-1].time),bm=new Map(B.map(x=>[x.time,x.close]));let last=null;
+    const r=d.map(x=>{const b=bm.get(x.time);if(b)last=b;return last?x.close/last:null}),f=r.findIndex(x=>x!=null);
+    if(f>=0){const E=emaA(r.slice(f),20),dev=r.map((x,i)=>i<f+20?null:x/E[i-f]-1),sl=r.map((x,i)=>i<f+25?null:E[i-f]/E[i-f-5]-1),sd=rollStd(dev,100),ss=rollStd(sl,100);
+      RS=dev.map((x,i)=>x==null||sl[i]==null||!sd[i]||!ss[i]?null:50+50*Math.tanh(.45*x/sd[i]+.45*sl[i]/ss[i]))}}catch(e){}}
+  /* 2) hacim gerçekliği */
+  const a=atrA(d,14),raw=d.map((x,i)=>{if(i<20)return 0;const rv=relVol(v,i),b=Math.abs(x.close-x.open)/(a[i]||1);
+    if(x.close>=x.open){const fs=fakeStr(x,a[i],rv);if(fs)return -fs;if(b>=.8&&rv>=1)return Math.min(1,.3+.4*(rv-1));return 0}
+    if(b<.6&&rv>=1.3)return Math.min(1,.3+.35*(rv-1.3));if(b>=1&&rv>=1.5)return -.3;return 0}),VS=emaA(raw,10).map((x,i)=>i<20?null:50+50*Math.tanh(2*x));
+  /* 3) spot vs kaldıraç */
+  const L=I.lev||{oi:[],fu:[]},oi=L.oi.length?alignOI(v,L.oi):new Array(n).fill(null);let fj=-1;const fr=d.map(x=>{const t=(x.time-OFF+TFSEC[v.tf])*1000;while(fj+1<L.fu.length&&L.fu[fj+1].t<=t)fj++;return fj>=0&&t-L.fu[fj].t<=9*3600e3+TFSEC[v.tf]*1000?L.fu[fj].r:null});
+  const K=5,LV=d.map((x,i)=>{if(i<K||oi[i]==null||oi[i-K]==null)return null;const dp=x.close/d[i-K].close-1,doi=oi[i]/oi[i-K]-1,ap=(a[i]/x.close)*Math.sqrt(K)||.01,f=fr[i]==null?0:(fr[i]*1e4-1)/2;
+    const w=Math.tanh(Math.abs(dp)/ap);let s;if(dp>0)s=w*(-Math.tanh(doi/(ap*1.5)))-(.35*Math.tanh(f))*w+(1-w)*(-.2*Math.tanh(f));else s=-.3*Math.tanh(doi/(ap*1.5))-.2*Math.tanh(f);return 50+50*clamp(s,-1,1)});
+  /* 4) genişlik */
+  let BR=new Array(n).fill(null),brTxt='';if(v.legend){const B=breadthGet(v.tf,()=>{if(!I.dead&&v.ind==='grs')v.dirty=true});
+    if(B.map){let lastQ=null;BR=d.map(x=>{const q=B.map.get(x.time);return q&&q.n>=5?100*q.a/q.n:null});const ks=[...B.map.keys()].sort((p,q)=>q-p);lastQ=B.map.get(ks[0]);
+      if(BR[n-1]==null&&lastQ){BR[n-1]=100*lastQ.a/lastQ.n}brTxt=lastQ?`Genişlik %${(100*lastQ.a/lastQ.n).toFixed(0)} (${lastQ.a}/${lastQ.n})`:''}
+    else brTxt=B.err?'Genişlik: veri yok':'Genişlik yükleniyor…'}else brTxt='Genişlik: yalnız ana grafikte';
+  /* birleşim */
+  const C=[[RS,GRSW.rs],[VS,GRSW.vol],[LV,GRSW.lev],[BR,GRSW.br]],G=d.map((x,i)=>{let s=0,w=0;C.forEach(([A,W])=>{if(A[i]!=null&&isFinite(A[i])){s+=A[i]*W;w+=W}});return w>=.25?clamp(s/w,0,100):null});
+  const up=css('--up'),dn=css('--dn');if(I.dead||I.gen!==g0||!I.l)return;
+  I.l.setData(T(d,G,x=>({color:x>70?up:x<40?dn:'#9a9993'})));
+  const m=[],st=Math.max(25,n-400);let prev=false,lastM=-99;for(let i=st;i<n;i++){let hh=-Infinity;for(let j=i-19;j<=i;j++)hh=Math.max(hh,d[j].high);
+    const div=G[i]!=null&&G[i-5]!=null&&d[i].close>=hh*.99&&G[i]<G[i-5]-5;if(div&&!prev&&i-lastM>=10){lastM=i;m.push({time:d[i].time,position:'aboveBar',color:'#e08a1e',shape:'arrowDown',text:'⚠ Uyumsuzluk'})}prev=div}
+  I.l.setMarkers(m);I.div=m.length;
+  const x=G[n-1],last=A=>{const q=A[n-1];return q==null?'–':q.toFixed(0)};if(x==null)return 'Hesaplanacak yeterli veri yok.';
+  const miss=[v.c==='BTC'?'BTC gücü (BTC kendisi)':RS[n-1]==null?'BTC gücü':'',LV[n-1]==null?'OI/funding':'',BR[n-1]==null?'genişlik':''].filter(Boolean);
+  const dv=m.length&&m[m.length-1].time>=d[Math.max(0,n-5)].time;
+  return `<b class="${x>70?'up':x<40?'dn':''}">${x.toFixed(0)}/100 · ${x>70?'Gerçek rotasyon':x<40?'Şişirme/zayıf':'Belirsiz'}</b> · BTC gücü ${v.c==='BTC'?'n/a':last(RS)} · Hacim ${last(VS)} · Kaldıraç ${last(LV)}${fr[n-1]!=null?` (funding ${(fr[n-1]*100).toFixed(4)}%)`:''} · ${brTxt}${dv?' · <b style="color:#e08a1e">⚠ Uyumsuzluk: fiyat zirvede, GRS düşüyor</b>':''}${miss.length?` · <span style="color:var(--mu)">eksik: ${miss.join(', ')} → ağırlık dağıtıldı</span>`:''}`}
 
 function clearInd(v){const I=IND[v.ind];if(I&&I.teardown)try{I.teardown(v)}catch(e){}
   (v.own||[]).forEach(s=>{try{v.ch.removeSeries(s)}catch(e){}});v.own=[];v.ii={};
